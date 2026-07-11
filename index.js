@@ -1,61 +1,109 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Events } = require('discord.js');
+const {
+  Client, GatewayIntentBits, Events,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  PermissionFlagsBits,
+} = require('discord.js');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-client.once(Events.ClientReady, (c) => {
-  console.log(`Peppertidez bot online as ${c.user.tag}`);
-});
+// Where people paste their code. Falls back to your store if not set.
+const GIVEAWAY_URL = process.env.GIVEAWAY_URL || process.env.WP_URL || 'https://peppertidez.shop';
 
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'entrycode') return;
+// --- ask WordPress for this user's code ---
+async function mintCode(user) {
+  const res = await fetch(`${process.env.WP_URL}/wp-json/ptz/v1/mint-code`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-PTZ-Secret': process.env.PTZ_SECRET,
+    },
+    body: JSON.stringify({ discord_id: user.id, discord_username: user.username }),
+  });
+  return res.json();
+}
 
-  // Command only works inside the server. Running it here = proof they joined.
+// --- the private message they get with their code ---
+function codeMessage(data) {
+  return [
+    `🌶️ **Here's your giveaway entry code:**`,
+    '```',
+    data.code,
+    '```',
+    `👉 Tap to copy it, then paste it into the entry form here:`,
+    GIVEAWAY_URL,
+    ``,
+    `One entry per person — keep this code to yourself.`,
+  ].join('\n');
+}
+
+// --- shared handler for both the button and the /entrycode command ---
+async function giveCode(interaction) {
   if (!interaction.inGuild()) {
-    return interaction.reply({
-      content: 'Please run this inside the Peppertidez server to get your code.',
-      ephemeral: true,
-    });
+    return interaction.reply({ content: 'Please use this inside the Peppertidez server.', ephemeral: true });
   }
-
-  await interaction.deferReply({ ephemeral: true }); // only the user sees the reply
-
+  await interaction.deferReply({ ephemeral: true }); // only they can see it
   try {
-    const res = await fetch(`${process.env.WP_URL}/wp-json/ptz/v1/mint-code`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-PTZ-Secret': process.env.PTZ_SECRET,
-      },
-      body: JSON.stringify({
-        discord_id: interaction.user.id,
-        discord_username: interaction.user.username,
-      }),
-    });
-
-    const data = await res.json();
-
+    const data = await mintCode(interaction.user);
     if (!data.ok) {
-      return interaction.editReply(
-        `Hmm, something went wrong (${data.msg || 'try again shortly'}).`
-      );
+      return interaction.editReply(`Hmm, something went wrong (${data.msg || 'try again shortly'}).`);
     }
-
-    const intro = data.new
-      ? 'Here’s your giveaway entry code'
-      : 'You already have a code — here it is again';
-
-    return interaction.editReply(
-      `🌶️ ${intro}:\n\n**\`${data.code}\`**\n\n` +
-      `Head to the giveaway form at peppertidez.shop and paste it in to lock your entry. ` +
-      `One entry per person — keep this code to yourself.`
-    );
+    return interaction.editReply(codeMessage(data));
   } catch (err) {
     console.error(err);
-    return interaction.editReply(
-      'Network hiccup reaching the site. Give it a minute and try again.'
-    );
+    return interaction.editReply('Network hiccup reaching the site. Try again in a minute.');
+  }
+}
+
+// --- on startup: come online + register commands (no separate deploy step) ---
+client.once(Events.ClientReady, async (c) => {
+  console.log(`Peppertidez bot online as ${c.user.tag}`);
+  try {
+    const guild = await c.guilds.fetch(process.env.GUILD_ID);
+    await guild.commands.set([
+      { name: 'entrycode', description: 'Get your Peppertidez giveaway entry code' },
+      {
+        name: 'postgiveaway',
+        description: 'Admin: post the giveaway entry button in this channel',
+        default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+      },
+    ]);
+    console.log('Slash commands registered.');
+  } catch (err) {
+    console.error('Command registration failed:', err);
+  }
+});
+
+// --- handle commands + button clicks ---
+client.on(Events.InteractionCreate, async (interaction) => {
+  // Slash commands
+  if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === 'entrycode') {
+      return giveCode(interaction);
+    }
+    if (interaction.commandName === 'postgiveaway') {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('ptz_get_code')
+          .setLabel('Get My Entry Code')
+          .setEmoji('🎟️')
+          .setStyle(ButtonStyle.Primary)
+      );
+      await interaction.channel.send({
+        content: [
+          `🎯 **2,500 Follower Giveaway**`,
+          ``,
+          `Click the button below to get your personal entry code, then paste it into the entry form on our site to lock in your entry. One entry per person — good luck! 🌶️`,
+        ].join('\n'),
+        components: [row],
+      });
+      return interaction.reply({ content: 'Posted ✅', ephemeral: true });
+    }
+  }
+
+  // Button click
+  if (interaction.isButton() && interaction.customId === 'ptz_get_code') {
+    return giveCode(interaction);
   }
 });
 
