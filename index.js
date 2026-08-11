@@ -4,6 +4,7 @@ const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   PermissionFlagsBits,
 } = require('discord.js');
+const { postEntryMessage, handleButton, handleModal } = require('./giveawayEntryButton');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -67,6 +68,11 @@ client.once(Events.ClientReady, async (c) => {
         description: 'Admin: post the giveaway entry button in this channel',
         default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
       },
+      {
+        name: 'postentry',
+        description: 'Admin: post the giveaway ENTRY FORM button in the giveaway-entry channel',
+        default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+      },
     ]);
     console.log('Slash commands registered.');
   } catch (err) {
@@ -76,6 +82,10 @@ client.once(Events.ClientReady, async (c) => {
 
 // --- handle commands + button clicks ---
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Giveaway entry form: button opens the popup, modal saves the entry
+  if (interaction.isButton() && await handleButton(interaction)) return;
+  if (interaction.isModalSubmit() && await handleModal(interaction)) return;
+
   // Slash commands
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === 'entrycode') {
@@ -99,9 +109,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
       return interaction.reply({ content: 'Posted ✅', ephemeral: true });
     }
+    if (interaction.commandName === 'postentry') {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        await postEntryMessage(interaction.client);
+        return interaction.editReply('Entry form posted to the giveaway-entry channel ✅');
+      } catch (err) {
+        console.error('postentry failed:', err);
+        return interaction.editReply('Could not post it — check PTZ_GW_ENTRY_CHANNEL_ID is set correctly.');
+      }
+    }
   }
 
-  // Button click
+  // Button click (entry code)
   if (interaction.isButton() && interaction.customId === 'ptz_get_code') {
     return giveCode(interaction);
   }
