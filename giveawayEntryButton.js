@@ -33,7 +33,7 @@ async function postEntryMessage(client) {
     .setDescription(
       'Tap the button below to lock in your entry.\n\n' +
       '**Step 1:** Enter your info here (this counts as your base entry).\n' +
-      '**Step 2:** You\'ll get a link to rack up bonus entries on TikTok — follow, repost, like, comment.\n\n' +
+      '**Step 2:** You\'ll get a link to lock in your entry — just follow both our TikTok accounts: @peppertidez.labs and @peppertidez_backup.\n\n' +
       'Good luck! 🍀'
     )
     .setColor(0x8B0000);
