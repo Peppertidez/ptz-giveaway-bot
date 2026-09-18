@@ -73,6 +73,11 @@ client.once(Events.ClientReady, async (c) => {
         description: 'Admin: post the giveaway ENTRY FORM button in the giveaway-entry channel',
         default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
       },
+      {
+        name: 'postmini',
+        description: 'Admin: post the TECH TALK mini-giveaway button in the giveaway-entry channel',
+        default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+      },
     ]);
     console.log('Slash commands registered.');
   } catch (err) {
@@ -82,7 +87,8 @@ client.once(Events.ClientReady, async (c) => {
 
 // --- handle commands + button clicks ---
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Giveaway entry form: button opens the popup, modal saves the entry
+  // Giveaway entry forms: button opens the popup, modal saves the entry.
+  // handleButton/handleModal cover BOTH campaigns (main + tech talk).
   if (interaction.isButton() && await handleButton(interaction)) return;
   if (interaction.isModalSubmit() && await handleModal(interaction)) return;
 
@@ -112,11 +118,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === 'postentry') {
       await interaction.deferReply({ ephemeral: true });
       try {
-        await postEntryMessage(interaction.client);
-        return interaction.editReply('Entry form posted to the giveaway-entry channel ✅');
+        await postEntryMessage(interaction.client, 'main');
+        return interaction.editReply('Main entry form posted to the giveaway-entry channel ✅');
       } catch (err) {
         console.error('postentry failed:', err);
         return interaction.editReply('Could not post it — check PTZ_GW_ENTRY_CHANNEL_ID is set correctly.');
+      }
+    }
+    if (interaction.commandName === 'postmini') {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        await postEntryMessage(interaction.client, 'techtalk');
+        return interaction.editReply('Tech Talk mini-giveaway button posted ✅');
+      } catch (err) {
+        console.error('postmini failed:', err);
+        return interaction.editReply('Could not post it — check PTZ_GW_ENTRY_CHANNEL_ID and PTZ_TT_LOG_CHANNEL_ID are set.');
       }
     }
   }
