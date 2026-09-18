@@ -1,6 +1,12 @@
 // giveawayEntryButton.js
-// PTZ giveaway — locked-channel entry button + popup form (modal) for discord.js v14
-// Drop this file into your ptz-giveaway-bot repo, then wire it up (see WIRE-UP at the bottom).
+// PTZ giveaway — locked-channel entry buttons + popup forms (modals) for discord.js v14
+//
+// Supports MULTIPLE giveaways at once. Each "campaign" has its own button,
+// its own popup, its own log channel, and its own SweepWidget link.
+// Add more by dropping another entry in the CAMPAIGNS object below.
+//
+// The original giveaway keeps its exact button/modal IDs (ptz_gw_open /
+// ptz_gw_modal), so the button already posted in Discord keeps working.
 
 const {
   ButtonBuilder,
@@ -12,48 +18,89 @@ const {
   EmbedBuilder,
 } = require('discord.js');
 
-// ── CONFIG (set these as environment variables on Railway) ──────────────
-const CONFIG = {
-  entryChannelId:    process.env.PTZ_GW_ENTRY_CHANNEL_ID,   // your locked "giveaway-entry" channel ID
-  adminLogChannelId: process.env.PTZ_GW_ADMIN_CHANNEL_ID,   // a private channel where entries get logged (backup)
-  wpEndpoint:        process.env.PTZ_GW_WP_ENDPOINT,        // https://peppertidez.shop/wp-json/ptz/v1/gw-discord
-  wpSecret:          process.env.PTZ_GW_WP_SECRET,          // shared secret — must match the WP snippet
-  sweepwidgetUrl:    process.env.PTZ_GW_SWEEPWIDGET_URL,    // your SweepWidget live page link (step 2)
-};
-
-const BUTTON_ID = 'ptz_gw_open';
-const MODAL_ID  = 'ptz_gw_modal';
-
-// ── Post the entry message with the button (call this ONCE) ─────────────
-async function postEntryMessage(client) {
-  const channel = await client.channels.fetch(CONFIG.entryChannelId);
-
-  const embed = new EmbedBuilder()
-    .setTitle('🌶️ Peppertidez Giveaway — Enter Here')
-    .setDescription(
+// ── CAMPAIGNS ───────────────────────────────────────────────────────────
+// One block per giveaway. `key` is used by the admin command to pick which
+// button to post (see /postentry and /postmini in index.js).
+const CAMPAIGNS = {
+  // ── The main / current giveaway (unchanged IDs) ──
+  main: {
+    buttonId: 'ptz_gw_open',
+    modalId:  'ptz_gw_modal',
+    logTag:   'MAIN',
+    entryChannelId: process.env.PTZ_GW_ENTRY_CHANNEL_ID,   // locked "giveaway-entry" channel
+    logChannelId:   process.env.PTZ_GW_ADMIN_CHANNEL_ID,   // main log channel
+    sweepwidgetUrl: process.env.PTZ_GW_SWEEPWIDGET_URL,    // main SweepWidget link
+    embedTitle: '🌶️ Peppertidez Giveaway — Enter Here',
+    embedBody:
       'Tap the button below to lock in your entry.\n\n' +
       '**Step 1:** Enter your info here (this counts as your base entry).\n' +
-      '**Step 2:** You\'ll get a link to lock in your entry — just follow both our TikTok accounts: @peppertidez.labs and @peppertidez_backup.\n\n' +
-      'Good luck! 🍀'
-    )
+      '**Step 2:** You\'ll get a link to lock in your entry — just follow ' +
+      'both our TikTok accounts: @peppertidez.labs and @peppertidez_backup.\n\n' +
+      'Good luck! 🍀',
+    buttonLabel: 'Enter Giveaway',
+    buttonEmoji: '🎉',
+  },
+
+  // ── The Tech Talk mini giveaway (new) ──
+  techtalk: {
+    buttonId: 'ptz_tt_open',
+    modalId:  'ptz_tt_modal',
+    logTag:   'TECH TALK',
+    // Posts in the SAME entry channel as the main giveaway:
+    entryChannelId: process.env.PTZ_GW_ENTRY_CHANNEL_ID,
+    // ...but logs to its OWN channel:
+    logChannelId:   process.env.PTZ_TT_LOG_CHANNEL_ID,
+    sweepwidgetUrl: process.env.PTZ_TT_SWEEPWIDGET_URL,
+    embedTitle: '📣 Tech Talk Mini Giveaway — Enter Here',
+    embedBody:
+      'A quick bonus entry for the Tech Talk giveaway!\n\n' +
+      '**Step 1:** Enter your info here.\n' +
+      '**Step 2:** You\'ll get a link — complete the task there to lock in your entry.\n\n' +
+      'Good luck! 🍀',
+    buttonLabel: 'Enter Tech Talk Giveaway',
+    buttonEmoji: '📣',
+  },
+};
+
+// Quick lookups: which campaign owns a given button/modal ID.
+const byButtonId = {};
+const byModalId  = {};
+for (const key of Object.keys(CAMPAIGNS)) {
+  byButtonId[CAMPAIGNS[key].buttonId] = key;
+  byModalId[CAMPAIGNS[key].modalId]   = key;
+}
+
+// ── Post an entry message with its button (call per campaign) ───────────
+async function postEntryMessage(client, campaignKey = 'main') {
+  const c = CAMPAIGNS[campaignKey];
+  if (!c) throw new Error(`Unknown campaign: ${campaignKey}`);
+  if (!c.entryChannelId) throw new Error(`No entry channel set for campaign: ${campaignKey}`);
+
+  const channel = await client.channels.fetch(c.entryChannelId);
+
+  const embed = new EmbedBuilder()
+    .setTitle(c.embedTitle)
+    .setDescription(c.embedBody)
     .setColor(0x8B0000);
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(BUTTON_ID)
-      .setLabel('Enter Giveaway')
+      .setCustomId(c.buttonId)
+      .setLabel(c.buttonLabel)
       .setStyle(ButtonStyle.Success)
-      .setEmoji('🎉')
+      .setEmoji(c.buttonEmoji)
   );
 
   await channel.send({ embeds: [embed], components: [row] });
 }
 
-// ── Handle the button click → open the popup form ───────────────────────
+// ── Button click → open that campaign's popup form ──────────────────────
 async function handleButton(interaction) {
-  if (interaction.customId !== BUTTON_ID) return false;
+  const campaignKey = byButtonId[interaction.customId];
+  if (!campaignKey) return false;
+  const c = CAMPAIGNS[campaignKey];
 
-  const modal = new ModalBuilder().setCustomId(MODAL_ID).setTitle('Giveaway Entry');
+  const modal = new ModalBuilder().setCustomId(c.modalId).setTitle('Giveaway Entry');
 
   const name = new TextInputBuilder()
     .setCustomId('name').setLabel('Your name')
@@ -77,9 +124,11 @@ async function handleButton(interaction) {
   return true;
 }
 
-// ── Handle the popup form submit → save the entry ───────────────────────
+// ── Popup form submit → log the entry, hand out the SweepWidget link ────
 async function handleModal(interaction) {
-  if (interaction.customId !== MODAL_ID) return false;
+  const campaignKey = byModalId[interaction.customId];
+  if (!campaignKey) return false;
+  const c = CAMPAIGNS[campaignKey];
 
   await interaction.deferReply({ ephemeral: true });
 
@@ -92,73 +141,44 @@ async function handleModal(interaction) {
     return true;
   }
 
-  const entry = {
-    discord_id:  interaction.user.id,
-    discord_tag: interaction.user.tag,
-    name, email, tiktok,
-    at: new Date().toISOString(),
-  };
-
-  // Save to WordPress (durable — survives Railway redeploys). Dedupes on discord_id.
-  let saved = false;
-  if (CONFIG.wpEndpoint) {
+  // Log to this campaign's channel, tagged so campaigns stay separable.
+  if (c.logChannelId) {
     try {
-      const res = await fetch(CONFIG.wpEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-PTZ-Secret': CONFIG.wpSecret },
-        body: JSON.stringify(entry),
-      });
-      saved = res.ok;
+      const log = await interaction.client.channels.fetch(c.logChannelId);
+      await log.send(
+        `📥 **[${c.logTag}] New entry** — ${name} | ${email} | ${tiktok} | <@${interaction.user.id}>`
+      );
     } catch (e) {
-      saved = false;
+      console.error(`[${campaignKey}] log failed:`, e);
     }
   }
 
-  // Backup: log to a private admin channel
-  if (CONFIG.adminLogChannelId) {
-    try {
-      const log = await interaction.client.channels.fetch(CONFIG.adminLogChannelId);
-      await log.send(
-        `📥 **New entry** — ${name} | ${email} | ${tiktok} | <@${interaction.user.id}>` +
-        (saved ? '' : ' ⚠️ WP save failed')
-      );
-    } catch (e) { /* ignore */ }
-  }
-
-  const step2 = CONFIG.sweepwidgetUrl
-    ? `\n\n**Step 2 — bonus entries:** ${CONFIG.sweepwidgetUrl}`
+  const step2 = c.sweepwidgetUrl
+    ? `\n\n**Step 2 — lock in your entry:** ${c.sweepwidgetUrl}`
     : '';
 
   await interaction.editReply(`✅ You're in, ${name}! Your entry is locked.${step2}`);
   return true;
 }
 
-module.exports = { postEntryMessage, handleButton, handleModal, BUTTON_ID, MODAL_ID };
+module.exports = { postEntryMessage, handleButton, handleModal, CAMPAIGNS };
 
 /* ── WIRE-UP ───────────────────────────────────────────────────────────
-   In your main bot file (where you create `client`), add:
+   Already wired in index.js:
+     - interactionCreate routes buttons → handleButton, modals → handleModal
+     - /postentry posts the MAIN button
+     - /postmini  posts the TECH TALK button
 
-     const { postEntryMessage, handleButton, handleModal } = require('./giveawayEntryButton');
+   RAILWAY ENV VARS:
+     (existing — leave as-is)
+     PTZ_GW_ENTRY_CHANNEL_ID   = giveaway-entry channel ID (both buttons post here)
+     PTZ_GW_ADMIN_CHANNEL_ID   = main giveaway log channel ID
+     PTZ_GW_SWEEPWIDGET_URL    = main SweepWidget link
 
-     client.on('interactionCreate', async (interaction) => {
-       if (interaction.isButton()      && await handleButton(interaction)) return;
-       if (interaction.isModalSubmit() && await handleModal(interaction))  return;
-       // ...your existing interaction handling below...
-     });
+     (new — add these two)
+     PTZ_TT_LOG_CHANNEL_ID     = 1550292059343298611   (mini-giveaway log)
+     PTZ_TT_SWEEPWIDGET_URL    = https://sweepwidget.com/c/102356-wbgk3zpy
 
-   To POST the button message the first time, run this once (e.g. temporarily
-   inside your 'ready' event, then remove it after it posts once):
-
-     client.once('ready', async () => {
-       await postEntryMessage(client);
-     });
-
-   RAILWAY ENV VARS to set:
-     PTZ_GW_ENTRY_CHANNEL_ID   = (right-click the giveaway-entry channel → Copy Channel ID)
-     PTZ_GW_ADMIN_CHANNEL_ID   = (a private channel ID for entry logs)
-     PTZ_GW_WP_ENDPOINT        = https://peppertidez.shop/wp-json/ptz/v1/gw-discord
-     PTZ_GW_WP_SECRET          = (a long random string — must match the WP snippet)
-     PTZ_GW_SWEEPWIDGET_URL    = (your SweepWidget live page link)
-
-   (Enable Developer Mode in Discord → User Settings → Advanced, to copy IDs.)
+   The old PTZ_GW_WP_ENDPOINT / PTZ_GW_WP_SECRET vars are no longer read —
+   you can delete them (that's what removed the "WP save failed" flag).
 ────────────────────────────────────────────────────────────────────────── */
