@@ -1,21 +1,21 @@
 /**
- * discordStirButton.js — Prize Cauldron Discord stir
+ * discordStirButton.js — Prize Cauldron Discord stir (v1.2)
  *
- * Adds:
- *   • /poststir           admin command: posts the "🎃 Stir the Cauldron" button
- *                         in the current channel
- *   • Button handler      opens an email modal
- *   • Modal handler       POSTs to WordPress REST, DMs the user their prize
- *   • guildMemberAdd      welcomes new joiners and points them to the stir channel
+ * The bot no longer rolls the prize. It just creates a PENDING stir server-side
+ * and DMs a login-gated cauldron URL. The user logs into peppertidez.shop, the
+ * real cauldron page plays its full animation, and the prize is rolled + revealed
+ * right there.
  *
- * Required env vars (set in Railway → Variables):
+ * Required env vars (Railway → Variables):
  *   PTZ_PPC_WP_STIR_ENDPOINT     https://peppertidez.shop/wp-json/ppc/v1/discord-stir
- *   PTZ_PPC_WP_SECRET            same string set in wp-config.php PPC_DISCORD_STIR_SECRET
- *   PTZ_PPC_STIR_CHANNEL_ID      Discord channel ID where the stir button lives
- *   PTZ_PPC_WELCOME_CHANNEL_ID   (optional) channel for the auto-welcome message
+ *   PTZ_PPC_WP_SECRET            same string as wp-config.php PPC_DISCORD_STIR_SECRET
+ *   PTZ_PPC_STIR_CHANNEL_ID      channel ID where the stir button lives
+ *   PTZ_PPC_WELCOME_CHANNEL_ID   optional — channel for the auto-welcome message
  *
- * Wiring in index.js (one line, see bottom of this file):
- *   require('./discordStirButton')(client);
+ * Wiring in index.js: already in place.
+ *   const registerStir = require('./discordStirButton');
+ *   // push 'poststir' into the slash command set
+ *   registerStir(client);
  */
 
 const {
@@ -34,20 +34,14 @@ const BTN_ID    = 'ppc_stir_open';
 const MODAL_ID  = 'ppc_stir_modal';
 const EMAIL_ID  = 'ppc_stir_email';
 
-// =========================================================================
-// Public: slash command definition for registration
-// =========================================================================
 const stirCommand = new SlashCommandBuilder()
   .setName('poststir')
   .setDescription('[Admin] Post the Prize Cauldron stir button in this channel.')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
 
-// =========================================================================
-// Factory — call this once from index.js with your client
-// =========================================================================
 module.exports = function registerStir(client) {
 
-  // ---------- Slash command: /poststir ----------
+  // ---------- /poststir ----------
   client.on('interactionCreate', async (i) => {
     if (!i.isChatInputCommand()) return;
     if (i.commandName !== 'poststir') return;
@@ -63,11 +57,10 @@ module.exports = function registerStir(client) {
         .setColor(0xff7a1a)
         .setTitle('🔮 The Prize Cauldron 🔮')
         .setDescription(
-          "Haven't placed an order yet? Stir the cauldron right here.\n\n" +
-          "Click below, drop your email, and the cauldron picks your prize. " +
-          "When you place your first order with that email, your prize is already waiting."
-        )
-        .setFooter({ text: 'One stir per Discord account. One stir per email.' });
+          "Click below, drop your email, and we'll send you a link to the real cauldron.\n\n" +
+          "Log in, stir it on the site, and your prize comes out — with the full animation + sound.\n\n" +
+          "One stir per Discord account. One stir per email."
+        );
       await i.channel.send({ embeds: [embed], components: [row] });
       await i.editReply({ content: '✓ Stir button posted.' });
     } catch (err) {
@@ -76,7 +69,7 @@ module.exports = function registerStir(client) {
     }
   });
 
-  // ---------- Button → open email modal ----------
+  // ---------- Button → email modal ----------
   client.on('interactionCreate', async (i) => {
     if (!i.isButton()) return;
     if (i.customId !== BTN_ID) return;
@@ -97,7 +90,7 @@ module.exports = function registerStir(client) {
     }
   });
 
-  // ---------- Modal submit → call WP, DM result ----------
+  // ---------- Modal → create pending stir on the site, DM the link ----------
   client.on('interactionCreate', async (i) => {
     if (!i.isModalSubmit()) return;
     if (i.customId !== MODAL_ID) return;
@@ -132,23 +125,31 @@ module.exports = function registerStir(client) {
       return i.editReply({ content: '⚠️ Couldn\'t reach the cauldron right now. Try again in a minute.' });
     }
 
-    const prize = data.prize || {};
-    const replay = !!data.replay;
-    const lines = [];
-    lines.push(replay
-      ? '🔁 You already stirred once. Here\'s what the cauldron gave you:'
-      : '🫧 **The cauldron bubbles...** and your prize appears:');
-    lines.push('');
-    lines.push(`**${prize.label}**`);
-    if (prize.code)          lines.push(`Code: \`${prize.code}\`  (locked to ${email}, one use)`);
-    if (prize.bonus_entries) lines.push(`+${prize.bonus_entries} giveaway entries added to your email.`);
-    lines.push('');
-    lines.push('Your prize is **tied to this email**. Place your first order with it and your prize applies automatically.');
+    const url     = data.cauldron_url;
+    const replay  = !!data.replay;
+    const already = !!data.revealed;
 
-    // Try to DM; fall back to ephemeral reply if DMs are closed.
+    const lines = [];
+    if (already) {
+      lines.push('🔁 You\'ve already stirred and revealed your prize.');
+      lines.push('');
+      lines.push('Open it again here (log in if asked):');
+    } else if (replay) {
+      lines.push('🔁 Your cauldron is already queued up — stir it when you\'re ready.');
+      lines.push('');
+      lines.push('Log in and stir it here:');
+    } else {
+      lines.push('🫧 **Your cauldron is ready to stir.**');
+      lines.push('');
+      lines.push('Log in and open this link — the full cauldron page plays with sound + animation, then reveals your prize:');
+    }
+    lines.push(url);
+    lines.push('');
+    lines.push(`Prize is tied to **${email}** — order with that same email and your prize applies automatically.`);
+
     try {
       await i.user.send({ content: lines.join('\n') });
-      await i.editReply({ content: '✓ Check your DMs — the cauldron sent you something.' });
+      await i.editReply({ content: '✓ Check your DMs — your cauldron link is waiting.' });
     } catch (err) {
       await i.editReply({ content: lines.join('\n') });
     }
@@ -164,7 +165,7 @@ module.exports = function registerStir(client) {
         await ch.send({
           content:
             `👻 Welcome, <@${member.id}>! Head to ${stirMention} and click **🎃 Stir the Cauldron** ` +
-            `to grab your Halloween prize before you order. One stir per person.`,
+            `to claim your Halloween prize. One stir per person.`,
         });
       } catch (err) {
         console.error('[ppc-stir] welcome failed', err);
@@ -172,9 +173,7 @@ module.exports = function registerStir(client) {
     });
   }
 
-  console.log('[ppc-stir] module loaded');
+  console.log('[ppc-stir] module loaded (v1.2 — link-to-cauldron flow)');
 };
 
-// Export the slash command definition so index.js can push it into
-// the array it registers on startup.
 module.exports.stirCommand = stirCommand;
