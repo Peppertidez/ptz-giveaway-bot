@@ -5,6 +5,7 @@ const {
   PermissionFlagsBits,
 } = require('discord.js');
 const { postEntryMessage, handleButton, handleModal } = require('./giveawayEntryButton');
+const registerStir = require('./discordStirButton');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -78,6 +79,11 @@ client.once(Events.ClientReady, async (c) => {
         description: 'Admin: post the TECH TALK mini-giveaway button in the giveaway-entry channel',
         default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
       },
+      {
+        name: 'poststir',
+        description: 'Admin: post the Prize Cauldron STIR button in this channel',
+        default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+      },
     ]);
     console.log('Slash commands registered.');
   } catch (err) {
@@ -135,6 +141,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.editReply('Could not post it — check PTZ_GW_ENTRY_CHANNEL_ID and PTZ_TT_LOG_CHANNEL_ID are set.');
       }
     }
+    // /poststir is handled inside discordStirButton.js (registered via registerStir(client) below)
   }
 
   // Button click (entry code)
@@ -142,5 +149,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return giveCode(interaction);
   }
 });
+
+// --- Prize Cauldron Discord stir: slash command, button, modal, welcome ---
+registerStir(client);
 
 client.login(process.env.TOKEN);
